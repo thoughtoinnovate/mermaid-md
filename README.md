@@ -2,24 +2,34 @@
 
 Render Mermaid diagrams from Markdown files and display them inline in terminals that support the Kitty graphics protocol (Kitty, Ghostty).
 
+## Quick start (no Rust required)
+
+Install latest released binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thoughtoinnovate/mermaid-md/master/scripts/install-binary.sh | bash
+```
+
+Install specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thoughtoinnovate/mermaid-md/master/scripts/install-binary.sh | bash -s -- v0.1.0
+```
+
+Then ensure `~/.local/bin` is on PATH.
+
 ## Prerequisites
 
-- Rust toolchain (`cargo`, `rustc`)
 - Node.js + npm
 - Mermaid CLI:
   - `npm install -g @mermaid-js/mermaid-cli`
   - or `bun add -g @mermaid-js/mermaid-cli`
 - Chromium/Chrome available for `mmdc` in container/headless setups
 
-## Build
+## Build from source (optional)
 
 ```bash
 cargo build --release
-```
-
-Binary:
-
-```bash
 ./target/release/mermaid-inline
 ```
 
@@ -49,16 +59,16 @@ mermaid-inline render /path/to/file.md --watch --out-dir /tmp/mermaid-out
 
 ## Neovim (lazy.nvim)
 
-Add this plugin spec in your Lazy config (for example `~/.config/nvim/lua/plugins/mermaid.lua`):
+Add this plugin spec (for example `~/.config/nvim/lua/plugins/mermaid.lua`):
 
 ```lua
 return {
   {
-    dir = "/home/dev/data/work/code/mermaid-md",
+    dir = "/path/to/mermaid-md",
     name = "mermaid-inline.nvim",
     ft = { "markdown" },
     opts = {
-      command = "/home/dev/data/work/code/mermaid-md/target/release/mermaid-inline",
+      command = "mermaid-inline", -- binary from PATH
       auto_render = true,
       pattern = "*.md",
       preview_height = 12,
@@ -86,11 +96,11 @@ For CI/container/headless verification, use file output mode:
 ```lua
 return {
   {
-    dir = "/home/dev/data/work/code/mermaid-md",
+    dir = "/path/to/mermaid-md",
     name = "mermaid-inline.nvim",
     ft = { "markdown" },
     opts = {
-      command = "/home/dev/data/work/code/mermaid-md/target/release/mermaid-inline",
+      command = "mermaid-inline",
       auto_render = true,
       open_preview_on_render = false,
       pattern = "*.md",
@@ -107,7 +117,7 @@ Run test:
 
 ```bash
 rm -rf /tmp/mermaid-out && mkdir -p /tmp/mermaid-out
-nvim --headless /home/dev/data/work/code/mermaid-md/tests/fixtures/markdown_with_mermaid.md "+write" "+sleep 15" "+qa"
+nvim --headless tests/fixtures/markdown_with_mermaid.md "+write" "+sleep 15" "+qa"
 ls -la /tmp/mermaid-out
 ```
 
@@ -115,3 +125,19 @@ Expected files:
 
 - `/tmp/mermaid-out/mermaid-1.png`
 - `/tmp/mermaid-out/mermaid-2.png`
+
+## GitHub Actions release flow
+
+- CI workflow: `.github/workflows/ci.yml`
+  - Runs `cargo test`, `cargo fmt -- --check`, `cargo clippy`.
+- Release workflow: `.github/workflows/release.yml`
+  - Triggered on tag push `v*`.
+  - Builds binaries for Linux/macOS/Windows.
+  - Uploads packaged artifacts and publishes them to GitHub Releases.
+
+To publish a new version:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
