@@ -9,11 +9,16 @@ local defaults = {
   render_args = { "--inline", "--clear" },
   inline_in_buffer = true,
   inline_out_dir = nil,
+  modal_width_ratio = 0.85,
+  modal_height_ratio = 0.85,
+  modal_zoom_step = 0.15,
+  modal_border = "rounded",
 }
 
 M.config = vim.deepcopy(defaults)
 M.preview_job = nil
 M.buffer_images = {}
+M.modal = nil
 M.ns = vim.api.nvim_create_namespace("MermaidInline")
 
 local function is_job_running(job)
@@ -29,6 +34,18 @@ local function create_or_replace_user_command(name, fn, opts)
   vim.api.nvim_create_user_command(name, fn, opts)
 end
 
+local function shellescape(value)
+  return vim.fn.shellescape(value)
+end
+
+local function image_module()
+  local ok, image = pcall(require, "image")
+  if not ok or type(image.from_file) ~= "function" then
+    return nil
+  end
+  return image
+end
+
 function M.open_preview()
   if is_job_running(M.preview_job) then
     return M.preview_job
@@ -38,10 +55,6 @@ function M.open_preview()
   vim.cmd("terminal")
   M.preview_job = vim.b.terminal_job_id
   return M.preview_job
-end
-
-local function shellescape(value)
-  return vim.fn.shellescape(value)
 end
 
 local function render_cmd(file)
@@ -73,6 +86,16 @@ local function find_mermaid_blocks(bufnr)
   return blocks
 end
 
+local function block_index_at_cursor(bufnr)
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  for _, block in ipairs(find_mermaid_blocks(bufnr)) do
+    if line >= block.start_line and line <= block.end_line then
+      return block.index
+    end
+  end
+  return nil
+end
+
 local function inline_out_dir(bufnr, file)
   if M.config.inline_out_dir and M.config.inline_out_dir ~= "" then
     vim.fn.mkdir(M.config.inline_out_dir, "p")
@@ -90,6 +113,10 @@ local function inline_out_dir(bufnr, file)
   return path
 end
 
+local function diagram_path(out_dir, index)
+  return string.format("%s/mermaid-%d.png", out_dir, index)
+end
+
 local function clear_buffer_images(bufnr)
   local images = M.buffer_images[bufnr] or {}
   for _, img in ipairs(images) do
@@ -102,8 +129,8 @@ local function clear_buffer_images(bufnr)
 end
 
 local function render_images_in_buffer(bufnr, out_dir)
-  local ok, image = pcall(require, "image")
-  if not ok or type(image.from_file) ~= "function" then
+  local image = image_module()
+  if not image then
     return false, "image.nvim is not available"
   end
 
@@ -114,7 +141,7 @@ local function render_images_in_buffer(bufnr, out_dir)
   clear_buffer_images(bufnr)
 
   for _, block in ipairs(blocks) do
-    local path = string.format("%s/mermaid-%d.png", out_dir, block.index)
+    local path = diagram_path(out_dir, block.index)
     if vim.fn.filereadable(path) == 1 then
       local ok_img, img = pcall(image.from_file, path, {
         window = winid,
@@ -147,6 +174,151 @@ local function run_shell_async(cmd, on_exit)
   })
 end
 
+local function close_modal()
+  if M.modal and M.modal.img then
+    pcall(function()
+      M.modal.img:clear()
+    end)
+  end
+  if M.modal and M.modal.win and vim.api.nvim_win_is_valid(M.modal.win) then
+    pcall(vim.api.nvim_win_close, M.modal.win, true)
+  end
+  M.modal = nil
+end
+
+local function modal_size(scale)
+  local cols = vim.o.columns
+  local lines = vim.o.lines - vim.o.cmdheight
+
+  local w = math.max(20, math.floor(cols * M.config.modal_width_ratio * scale))
+  local h = math.max(6, math.floor(lines * M.config.modal_height_ratio * scale))
+
+  w = math.min(w, cols - 4)
+  h = math.min(h, lines - 4)
+
+  return w, h
+end
+
+local function render_modal_image()
+  if not M.modal then
+    return
+  end
+  local image = image_module()
+  if not image then
+    vim.notify("image.nvim is required for modal view", vim.log.levels.WARN)
+    return
+  end
+
+  if M.modal.img then
+    pcall(function()
+      M.modal.img:clear()
+    end)
+    M.modal.img = nil
+  end
+
+  local ok_img, img = pcall(image.from_file, M.modal.path, {
+    window = M.modal.win,
+    buffer = M.modal.buf,
+    x = 0,
+    y = 0,
+    with_virtual_padding = true,
+  })
+  if ok_img and img then
+    M.modal.img = img
+    pcall(function()
+      img:render()
+    end)
+  end
+end
+
+local function apply_modal_resize()
+  if not (M.modal and M.modal.win and vim.api.nvim_win_is_valid(M.modal.win)) then
+    return
+  end
+  local width, height = modal_size(M.modal.scale)
+  local row = math.floor((vim.o.lines - height) / 2) - 1
+  local col = math.floor((vim.o.columns - width) / 2)
+
+  vim.api.nvim_win_set_config(M.modal.win, {
+    relative = "editor",
+    style = "minimal",
+    border = M.config.modal_border,
+    row = math.max(0, row),
+    col = math.max(0, col),
+    width = width,
+    height = height,
+  })
+  render_modal_image()
+end
+
+local function modal_zoom(delta)
+  if not M.modal then
+    return
+  end
+  M.modal.scale = math.max(0.4, math.min(2.0, M.modal.scale + delta))
+  apply_modal_resize()
+end
+
+local function open_modal(path)
+  local image = image_module()
+  if not image then
+    vim.notify("image.nvim is required for modal view", vim.log.levels.WARN)
+    return
+  end
+
+  if vim.fn.filereadable(path) ~= 1 then
+    vim.notify("Mermaid image not found: " .. path, vim.log.levels.WARN)
+    return
+  end
+
+  close_modal()
+
+  local width, height = modal_size(1.0)
+  local row = math.floor((vim.o.lines - height) / 2) - 1
+  local col = math.floor((vim.o.columns - width) / 2)
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    style = "minimal",
+    border = M.config.modal_border,
+    row = math.max(0, row),
+    col = math.max(0, col),
+    width = width,
+    height = height,
+  })
+
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].swapfile = false
+
+  M.modal = {
+    buf = buf,
+    win = win,
+    img = nil,
+    path = path,
+    scale = 1.0,
+  }
+
+  local function map(lhs, rhs)
+    vim.keymap.set("n", lhs, rhs, { buffer = buf, nowait = true, silent = true })
+  end
+
+  map("q", close_modal)
+  map("<Esc>", close_modal)
+  map("+", function()
+    modal_zoom(M.config.modal_zoom_step)
+  end)
+  map("=", function()
+    modal_zoom(M.config.modal_zoom_step)
+  end)
+  map("-", function()
+    modal_zoom(-M.config.modal_zoom_step)
+  end)
+
+  render_modal_image()
+end
+
 local function render_inline_in_buffer(file, bufnr)
   local out_dir = inline_out_dir(bufnr, file)
   local cmd = M.config.command .. " render " .. shellescape(file) .. " --out-dir " .. shellescape(out_dir)
@@ -161,6 +333,32 @@ local function render_inline_in_buffer(file, bufnr)
     if not ok and err then
       vim.notify("Mermaid inline render fallback: " .. err, vim.log.levels.WARN)
     end
+  end)
+end
+
+local function open_modal_for_current(file, bufnr)
+  local blocks = find_mermaid_blocks(bufnr)
+  if #blocks == 0 then
+    vim.notify("No mermaid block found in current buffer", vim.log.levels.INFO)
+    return
+  end
+
+  local index = block_index_at_cursor(bufnr) or 1
+  local out_dir = inline_out_dir(bufnr, file)
+  local path = diagram_path(out_dir, index)
+
+  if vim.fn.filereadable(path) == 1 then
+    open_modal(path)
+    return
+  end
+
+  local cmd = M.config.command .. " render " .. shellescape(file) .. " --out-dir " .. shellescape(out_dir)
+  run_shell_async(cmd, function(code)
+    if code ~= 0 then
+      vim.notify("Mermaid render failed (exit " .. tostring(code) .. ")", vim.log.levels.WARN)
+      return
+    end
+    open_modal(path)
   end)
 end
 
@@ -226,6 +424,19 @@ function M.setup(opts)
   create_or_replace_user_command("MermaidInlineRender", function(cmd_opts)
     local file = cmd_opts.args ~= "" and cmd_opts.args or nil
     M.render(file)
+  end, {
+    nargs = "?",
+    complete = "file",
+  })
+
+  create_or_replace_user_command("MermaidInlineOpenModal", function(cmd_opts)
+    local bufnr = vim.api.nvim_get_current_buf()
+    local file = cmd_opts.args ~= "" and cmd_opts.args or vim.api.nvim_buf_get_name(bufnr)
+    if file == "" then
+      vim.notify("No file to render", vim.log.levels.WARN)
+      return
+    end
+    open_modal_for_current(file, bufnr)
   end, {
     nargs = "?",
     complete = "file",

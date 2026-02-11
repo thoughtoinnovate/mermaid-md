@@ -79,6 +79,10 @@ return {
       open_preview_on_render = false,
       pattern = "*.md",
       render_args = { "--inline", "--clear" },
+      modal_width_ratio = 0.85,
+      modal_height_ratio = 0.85,
+      modal_zoom_step = 0.15,
+      modal_border = "rounded",
     },
     config = function(_, opts)
       require("mermaid_inline").setup(opts)
@@ -98,7 +102,14 @@ Available commands:
 - `:MermaidInlineOpenPreview`
 - `:MermaidInlineRender`
 - `:MermaidInlineRender /full/path/file.md`
+- `:MermaidInlineOpenModal`
 - `:MermaidInlineToggleAuto`
+
+Modal controls (inside modal window):
+
+- `+` or `=`: zoom in
+- `-`: zoom out
+- `q` or `Esc`: close modal
 
 ## Neovim headless test
 
