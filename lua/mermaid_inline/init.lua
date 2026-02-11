@@ -466,11 +466,13 @@ local function ensure_buffer_keymaps(bufnr)
   vim.keymap.set("n", "<CR>", function()
     local file = vim.api.nvim_buf_get_name(bufnr)
     if file ~= "" and block_index_at_cursor(bufnr) then
-      open_modal_for_current(file, bufnr)
-      return ""
+      vim.schedule(function()
+        open_modal_for_current(file, bufnr)
+      end)
+      return
     end
-    return "\r"
-  end, { buffer = bufnr, expr = true, silent = true })
+    vim.cmd("normal! <CR>")
+  end, { buffer = bufnr, silent = true })
 end
 
 function M.render(file, bufnr)
