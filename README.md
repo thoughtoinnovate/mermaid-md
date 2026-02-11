@@ -64,11 +64,11 @@ Add this plugin spec (for example `~/.config/nvim/lua/plugins/mermaid.lua`):
 ```lua
 return {
   {
-    dir = "/path/to/mermaid-md",
-    name = "mermaid-inline.nvim",
+    "thoughtoinnovate/mermaid-md",
     ft = { "markdown" },
+    build = "bash scripts/install-binary.sh",
     opts = {
-      command = "mermaid-inline", -- binary from PATH
+      command = "mermaid-inline",
       auto_render = true,
       pattern = "*.md",
       preview_height = 12,
@@ -96,9 +96,9 @@ For CI/container/headless verification, use file output mode:
 ```lua
 return {
   {
-    dir = "/path/to/mermaid-md",
-    name = "mermaid-inline.nvim",
+    "thoughtoinnovate/mermaid-md",
     ft = { "markdown" },
+    build = "bash scripts/install-binary.sh",
     opts = {
       command = "mermaid-inline",
       auto_render = true,
