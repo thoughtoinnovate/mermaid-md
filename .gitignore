@@ -1,0 +1,16 @@
+# Rust build artifacts
+/target/
+
+# Editor / OS files
+.DS_Store
+._*
+*.swp
+*.swo
+
+# Local env / logs
+.env
+.env.*
+*.log
+
+# Neovim local state (if created in repo)
+/.nvim/
