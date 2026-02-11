@@ -221,7 +221,9 @@ local function render_modal_image()
     x = x,
     y = y,
     width = img_width,
+    max_width = img_width,
     height = img_height,
+    max_height = img_height,
     with_virtual_padding = true,
   })
   if ok_img and img then
@@ -370,32 +372,51 @@ local function render_images_in_buffer(bufnr, out_dir, blocks)
     return false, "image.nvim is not available"
   end
 
-  local wins = vim.fn.win_findbuf(bufnr)
-  local winid = wins[1] or vim.api.nvim_get_current_win()
-  local win_width = vim.api.nvim_win_get_width(winid)
-  local x = math.max(0, math.floor((win_width - M.config.image_width_cells) / 2))
-
   clear_buffer_images(bufnr)
+
+  local wins = vim.fn.win_findbuf(bufnr)
+  local current_win = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_is_valid(current_win) and vim.api.nvim_win_get_buf(current_win) == bufnr then
+    table.insert(wins, 1, current_win)
+  end
+
+  local seen = {}
+  local final_wins = {}
+  for _, winid in ipairs(wins) do
+    if vim.api.nvim_win_is_valid(winid) and not seen[winid] then
+      seen[winid] = true
+      table.insert(final_wins, winid)
+    end
+  end
+
+  if #final_wins == 0 then
+    return false, "no visible window for markdown buffer"
+  end
 
   local rendered_count = 0
 
-  for _, block in ipairs(blocks) do
-    local path = diagram_path(out_dir, block.index)
-    if vim.fn.filereadable(path) == 1 then
-      local ok_img, img = pcall(image.from_file, path, {
-        window = winid,
-        buffer = bufnr,
-        x = x,
-        y = block.start_line - 1,
-        with_virtual_padding = true,
-      })
-      if ok_img and img then
-        local ok_render = pcall(function()
-          img:render()
-        end)
-        if ok_render then
-          rendered_count = rendered_count + 1
-          table.insert(M.buffer_images[bufnr], img)
+  for _, winid in ipairs(final_wins) do
+    local win_width = vim.api.nvim_win_get_width(winid)
+    local x = math.max(0, math.floor((win_width - M.config.image_width_cells) / 2))
+
+    for _, block in ipairs(blocks) do
+      local path = diagram_path(out_dir, block.index)
+      if vim.fn.filereadable(path) == 1 then
+        local ok_img, img = pcall(image.from_file, path, {
+          window = winid,
+          buffer = bufnr,
+          x = x,
+          y = block.start_line - 1,
+          with_virtual_padding = true,
+        })
+        if ok_img and img then
+          local ok_render = pcall(function()
+            img:render()
+          end)
+          if ok_render then
+            rendered_count = rendered_count + 1
+            table.insert(M.buffer_images[bufnr], img)
+          end
         end
       end
     end
