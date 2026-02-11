@@ -57,22 +57,27 @@ mermaid-inline render /path/to/file.md --watch --out-dir /tmp/mermaid-out
   - `$XDG_CACHE_HOME/mermaid-inline/` if set
   - else `$HOME/.cache/mermaid-inline/`
 
-## Neovim (lazy.nvim)
+## Neovim inline diagrams (lazy.nvim)
 
-Add this plugin spec (for example `~/.config/nvim/lua/plugins/mermaid.lua`):
+To render diagrams directly in the markdown buffer, install this plugin with `image.nvim`.
 
 ```lua
 return {
   {
+    "3rd/image.nvim",
+    opts = {},
+  },
+  {
     "thoughtoinnovate/mermaid-md",
     ft = { "markdown" },
+    dependencies = { "3rd/image.nvim" },
     build = "bash scripts/install-binary.sh",
     opts = {
       command = "mermaid-inline",
       auto_render = true,
+      inline_in_buffer = true,
+      open_preview_on_render = false,
       pattern = "*.md",
-      preview_height = 12,
-      open_preview_on_render = true,
       render_args = { "--inline", "--clear" },
     },
     config = function(_, opts)
@@ -81,6 +86,12 @@ return {
   },
 }
 ```
+
+Behavior:
+
+- On `BufEnter`/`BufWritePost` for `*.md`, mermaid blocks are rendered.
+- If `image.nvim` is available, PNGs are displayed inline in the markdown buffer.
+- If `image.nvim` is missing, plugin falls back to CLI-only rendering and logs a warning.
 
 Available commands:
 
@@ -102,6 +113,7 @@ return {
     opts = {
       command = "mermaid-inline",
       auto_render = true,
+      inline_in_buffer = false,
       open_preview_on_render = false,
       pattern = "*.md",
       render_args = { "--out-dir", "/tmp/mermaid-out" },
@@ -138,6 +150,6 @@ Expected files:
 To publish a new version:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```

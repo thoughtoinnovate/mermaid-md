@@ -3,4 +3,4 @@ if vim.g.loaded_mermaid_inline == 1 then
 end
 vim.g.loaded_mermaid_inline = 1
 
-require("mermaid_inline").setup()
+-- Setup is intentionally left to user/lazy config to avoid duplicate initialization.
