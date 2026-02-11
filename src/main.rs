@@ -154,7 +154,7 @@ fn render_once(
     } else {
         tempfile::tempdir()
             .context("create temp output dir")?
-            .into_path()
+            .keep()
     };
 
     let rendered = render_blocks(&blocks, &out_dir)?;

@@ -7,15 +7,14 @@ use tempfile::NamedTempFile;
 use crate::extract::MermaidBlock;
 
 pub struct RenderedDiagram {
-    pub index: usize,
     pub output_path: PathBuf,
 }
 
 fn detect_chrome_executable() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("MMDC_CHROME_PATH") {
-        if !path.trim().is_empty() {
-            return Some(PathBuf::from(path));
-        }
+    if let Ok(path) = std::env::var("MMDC_CHROME_PATH")
+        && !path.trim().is_empty()
+    {
+        return Some(PathBuf::from(path));
     }
 
     let candidates = [
@@ -81,10 +80,7 @@ pub fn render_blocks(blocks: &[MermaidBlock], out_dir: &Path) -> Result<Vec<Rend
             bail!("mmdc failed for diagram {}: {}", block.index, stderr.trim());
         }
 
-        rendered.push(RenderedDiagram {
-            index: block.index,
-            output_path,
-        });
+        rendered.push(RenderedDiagram { output_path });
     }
 
     Ok(rendered)

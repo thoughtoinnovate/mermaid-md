@@ -175,12 +175,12 @@ local function close_modal()
   M.modal = nil
 end
 
-local function modal_size(scale)
+local function modal_size()
   local cols = vim.o.columns
   local lines = vim.o.lines - vim.o.cmdheight
 
-  local w = math.max(20, math.floor(cols * M.config.modal_width_ratio * scale))
-  local h = math.max(6, math.floor(lines * M.config.modal_height_ratio * scale))
+  local w = math.max(20, math.floor(cols * M.config.modal_width_ratio))
+  local h = math.max(6, math.floor(lines * M.config.modal_height_ratio))
 
   w = math.min(w, cols - 4)
   h = math.min(h, lines - 4)
@@ -189,7 +189,7 @@ local function modal_size(scale)
 end
 
 local function render_modal_image()
-  if not M.modal then
+  if not (M.modal and M.modal.win and M.modal.buf and vim.api.nvim_win_is_valid(M.modal.win)) then
     return
   end
   local image = image_module()
@@ -205,11 +205,23 @@ local function render_modal_image()
     M.modal.img = nil
   end
 
+  local win_width = vim.api.nvim_win_get_width(M.modal.win)
+  local win_height = vim.api.nvim_win_get_height(M.modal.win)
+  local usable_width = math.max(1, win_width - 2)
+  local usable_height = math.max(1, win_height - 2)
+  local zoom = M.modal.zoom or 1.0
+  local img_width = math.max(1, math.floor(usable_width * zoom))
+  local img_height = math.max(1, math.floor(usable_height * zoom))
+  local x = math.max(0, math.floor((usable_width - img_width) / 2))
+  local y = math.max(0, math.floor((usable_height - img_height) / 2))
+
   local ok_img, img = pcall(image.from_file, M.modal.path, {
     window = M.modal.win,
     buffer = M.modal.buf,
-    x = 0,
-    y = 0,
+    x = x,
+    y = y,
+    width = img_width,
+    height = img_height,
     with_virtual_padding = true,
   })
   if ok_img and img then
@@ -224,7 +236,7 @@ local function apply_modal_resize()
   if not (M.modal and M.modal.win and vim.api.nvim_win_is_valid(M.modal.win)) then
     return
   end
-  local width, height = modal_size(M.modal.scale)
+  local width, height = modal_size()
   local row = math.floor((vim.o.lines - height) / 2) - 1
   local col = math.floor((vim.o.columns - width) / 2)
 
@@ -244,8 +256,8 @@ local function modal_zoom(delta)
   if not M.modal then
     return
   end
-  M.modal.scale = math.max(0.4, math.min(2.0, M.modal.scale + delta))
-  apply_modal_resize()
+  M.modal.zoom = math.max(0.25, math.min(3.0, (M.modal.zoom or 1.0) + delta))
+  render_modal_image()
 end
 
 local function open_modal(path)
@@ -262,7 +274,7 @@ local function open_modal(path)
 
   close_modal()
 
-  local width, height = modal_size(1.0)
+  local width, height = modal_size()
   local row = math.floor((vim.o.lines - height) / 2) - 1
   local col = math.floor((vim.o.columns - width) / 2)
 
@@ -286,7 +298,7 @@ local function open_modal(path)
     win = win,
     img = nil,
     path = path,
-    scale = 1.0,
+    zoom = 1.0,
   }
 
   local function map(lhs, rhs)
@@ -365,6 +377,8 @@ local function render_images_in_buffer(bufnr, out_dir, blocks)
 
   clear_buffer_images(bufnr)
 
+  local rendered_count = 0
+
   for _, block in ipairs(blocks) do
     local path = diagram_path(out_dir, block.index)
     if vim.fn.filereadable(path) == 1 then
@@ -376,12 +390,19 @@ local function render_images_in_buffer(bufnr, out_dir, blocks)
         with_virtual_padding = true,
       })
       if ok_img and img then
-        pcall(function()
+        local ok_render = pcall(function()
           img:render()
         end)
-        table.insert(M.buffer_images[bufnr], img)
+        if ok_render then
+          rendered_count = rendered_count + 1
+          table.insert(M.buffer_images[bufnr], img)
+        end
       end
     end
+  end
+
+  if rendered_count == 0 then
+    return false, "no images rendered (check image.nvim backend and terminal support)"
   end
 
   return true
@@ -428,15 +449,22 @@ local function render_inline_in_buffer(file, bufnr)
 
   run_shell_async(cmd, function(code)
     if code ~= 0 then
+      clear_buffer_images(bufnr)
+      restore_folds(bufnr)
       vim.notify("Mermaid render failed (exit " .. tostring(code) .. ")", vim.log.levels.WARN)
       return
     end
 
     if state.mode == "image" then
       local ok, err = render_images_in_buffer(bufnr, out_dir, blocks)
+      if not ok then
+        clear_buffer_images(bufnr)
+        restore_folds(bufnr)
+      end
       if not ok and err then
         vim.notify("Mermaid inline render fallback: " .. err, vim.log.levels.WARN)
-      else
+      end
+      if ok then
         set_mermaid_folds(bufnr, blocks)
       end
     else
