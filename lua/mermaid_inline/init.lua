@@ -406,7 +406,7 @@ local function render_images_in_buffer(bufnr, out_dir, blocks)
           window = winid,
           buffer = bufnr,
           x = x,
-          y = block.start_line - 1,
+          y = math.max(0, block.start_line - 2),
           with_virtual_padding = true,
         })
         if ok_img and img then
