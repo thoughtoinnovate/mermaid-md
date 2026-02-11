@@ -9,6 +9,9 @@ local defaults = {
   render_args = { "--inline", "--clear" },
   inline_in_buffer = true,
   inline_out_dir = nil,
+  default_view_mode = "image", -- image|code
+  image_width_cells = 80,
+  toggle_key = "<leader>mt",
   modal_width_ratio = 0.85,
   modal_height_ratio = 0.85,
   modal_zoom_step = 0.15,
@@ -18,6 +21,7 @@ local defaults = {
 M.config = vim.deepcopy(defaults)
 M.preview_job = nil
 M.buffer_images = {}
+M.buffer_state = {}
 M.modal = nil
 M.ns = vim.api.nvim_create_namespace("MermaidInline")
 
@@ -44,6 +48,18 @@ local function image_module()
     return nil
   end
   return image
+end
+
+local function get_state(bufnr)
+  if not M.buffer_state[bufnr] then
+    M.buffer_state[bufnr] = {
+      mode = M.config.default_view_mode,
+      out_dir = nil,
+      keymaps_set = false,
+      win_fold_opts = {},
+    }
+  end
+  return M.buffer_state[bufnr]
 end
 
 function M.open_preview()
@@ -97,9 +113,16 @@ local function block_index_at_cursor(bufnr)
 end
 
 local function inline_out_dir(bufnr, file)
+  local state = get_state(bufnr)
+  if state.out_dir and state.out_dir ~= "" then
+    vim.fn.mkdir(state.out_dir, "p")
+    return state.out_dir
+  end
+
   if M.config.inline_out_dir and M.config.inline_out_dir ~= "" then
-    vim.fn.mkdir(M.config.inline_out_dir, "p")
-    return M.config.inline_out_dir
+    state.out_dir = M.config.inline_out_dir
+    vim.fn.mkdir(state.out_dir, "p")
+    return state.out_dir
   end
 
   local stem = vim.fn.fnamemodify(file, ":t:r")
@@ -108,9 +131,9 @@ local function inline_out_dir(bufnr, file)
   end
   stem = stem:gsub("[^%w%-%_]+", "_")
 
-  local path = vim.fn.stdpath("cache") .. "/mermaid-inline/" .. stem
-  vim.fn.mkdir(path, "p")
-  return path
+  state.out_dir = vim.fn.stdpath("cache") .. "/mermaid-inline/" .. stem
+  vim.fn.mkdir(state.out_dir, "p")
+  return state.out_dir
 end
 
 local function diagram_path(out_dir, index)
@@ -126,40 +149,6 @@ local function clear_buffer_images(bufnr)
   end
   M.buffer_images[bufnr] = {}
   pcall(vim.api.nvim_buf_clear_namespace, bufnr, M.ns, 0, -1)
-end
-
-local function render_images_in_buffer(bufnr, out_dir)
-  local image = image_module()
-  if not image then
-    return false, "image.nvim is not available"
-  end
-
-  local wins = vim.fn.win_findbuf(bufnr)
-  local winid = wins[1] or vim.api.nvim_get_current_win()
-  local blocks = find_mermaid_blocks(bufnr)
-
-  clear_buffer_images(bufnr)
-
-  for _, block in ipairs(blocks) do
-    local path = diagram_path(out_dir, block.index)
-    if vim.fn.filereadable(path) == 1 then
-      local ok_img, img = pcall(image.from_file, path, {
-        window = winid,
-        buffer = bufnr,
-        x = 0,
-        y = block.start_line - 1,
-        with_virtual_padding = true,
-      })
-      if ok_img and img then
-        pcall(function()
-          img:render()
-        end)
-        table.insert(M.buffer_images[bufnr], img)
-      end
-    end
-  end
-
-  return true
 end
 
 local function run_shell_async(cmd, on_exit)
@@ -319,21 +308,83 @@ local function open_modal(path)
   render_modal_image()
 end
 
-local function render_inline_in_buffer(file, bufnr)
-  local out_dir = inline_out_dir(bufnr, file)
-  local cmd = M.config.command .. " render " .. shellescape(file) .. " --out-dir " .. shellescape(out_dir)
+local function set_mermaid_folds(bufnr, blocks)
+  local state = get_state(bufnr)
+  local wins = vim.fn.win_findbuf(bufnr)
 
-  run_shell_async(cmd, function(code)
-    if code ~= 0 then
-      vim.notify("Mermaid render failed (exit " .. tostring(code) .. ")", vim.log.levels.WARN)
-      return
+  for _, winid in ipairs(wins) do
+    if not state.win_fold_opts[winid] then
+      state.win_fold_opts[winid] = {
+        foldmethod = vim.wo[winid].foldmethod,
+        foldenable = vim.wo[winid].foldenable,
+        foldlevel = vim.wo[winid].foldlevel,
+      }
     end
 
-    local ok, err = render_images_in_buffer(bufnr, out_dir)
-    if not ok and err then
-      vim.notify("Mermaid inline render fallback: " .. err, vim.log.levels.WARN)
+    vim.wo[winid].foldmethod = "manual"
+    vim.wo[winid].foldenable = true
+
+    vim.api.nvim_win_call(winid, function()
+      vim.cmd("silent! normal! zE")
+      for _, block in ipairs(blocks) do
+        vim.cmd(string.format("silent! %d,%dfold", block.start_line, block.end_line))
+      end
+      vim.cmd("silent! normal! zM")
+    end)
+  end
+end
+
+local function restore_folds(bufnr)
+  local state = get_state(bufnr)
+  local wins = vim.fn.win_findbuf(bufnr)
+
+  for _, winid in ipairs(wins) do
+    local saved = state.win_fold_opts[winid]
+    if saved then
+      vim.api.nvim_win_call(winid, function()
+        vim.cmd("silent! normal! zE")
+      end)
+      vim.wo[winid].foldmethod = saved.foldmethod
+      vim.wo[winid].foldenable = saved.foldenable
+      vim.wo[winid].foldlevel = saved.foldlevel
+      state.win_fold_opts[winid] = nil
     end
-  end)
+  end
+end
+
+local function render_images_in_buffer(bufnr, out_dir, blocks)
+  local image = image_module()
+  if not image then
+    return false, "image.nvim is not available"
+  end
+
+  local wins = vim.fn.win_findbuf(bufnr)
+  local winid = wins[1] or vim.api.nvim_get_current_win()
+  local win_width = vim.api.nvim_win_get_width(winid)
+  local x = math.max(0, math.floor((win_width - M.config.image_width_cells) / 2))
+
+  clear_buffer_images(bufnr)
+
+  for _, block in ipairs(blocks) do
+    local path = diagram_path(out_dir, block.index)
+    if vim.fn.filereadable(path) == 1 then
+      local ok_img, img = pcall(image.from_file, path, {
+        window = winid,
+        buffer = bufnr,
+        x = x,
+        y = block.start_line - 1,
+        with_virtual_padding = true,
+      })
+      if ok_img and img then
+        pcall(function()
+          img:render()
+        end)
+        table.insert(M.buffer_images[bufnr], img)
+      end
+    end
+  end
+
+  return true
 end
 
 local function open_modal_for_current(file, bufnr)
@@ -362,6 +413,66 @@ local function open_modal_for_current(file, bufnr)
   end)
 end
 
+local function render_inline_in_buffer(file, bufnr)
+  local state = get_state(bufnr)
+  local blocks = find_mermaid_blocks(bufnr)
+
+  if #blocks == 0 then
+    clear_buffer_images(bufnr)
+    restore_folds(bufnr)
+    return
+  end
+
+  local out_dir = inline_out_dir(bufnr, file)
+  local cmd = M.config.command .. " render " .. shellescape(file) .. " --out-dir " .. shellescape(out_dir)
+
+  run_shell_async(cmd, function(code)
+    if code ~= 0 then
+      vim.notify("Mermaid render failed (exit " .. tostring(code) .. ")", vim.log.levels.WARN)
+      return
+    end
+
+    if state.mode == "image" then
+      local ok, err = render_images_in_buffer(bufnr, out_dir, blocks)
+      if not ok and err then
+        vim.notify("Mermaid inline render fallback: " .. err, vim.log.levels.WARN)
+      else
+        set_mermaid_folds(bufnr, blocks)
+      end
+    else
+      clear_buffer_images(bufnr)
+      restore_folds(bufnr)
+    end
+  end)
+end
+
+local function ensure_buffer_keymaps(bufnr)
+  local state = get_state(bufnr)
+  if state.keymaps_set then
+    return
+  end
+  state.keymaps_set = true
+
+  vim.keymap.set("n", M.config.toggle_key, function()
+    local s = get_state(bufnr)
+    s.mode = (s.mode == "image") and "code" or "image"
+    local file = vim.api.nvim_buf_get_name(bufnr)
+    if file ~= "" then
+      render_inline_in_buffer(file, bufnr)
+    end
+    vim.notify("Mermaid view mode: " .. s.mode, vim.log.levels.INFO)
+  end, { buffer = bufnr, silent = true, nowait = true })
+
+  vim.keymap.set("n", "<CR>", function()
+    local file = vim.api.nvim_buf_get_name(bufnr)
+    if file ~= "" and block_index_at_cursor(bufnr) then
+      open_modal_for_current(file, bufnr)
+      return ""
+    end
+    return "\r"
+  end, { buffer = bufnr, expr = true, silent = true })
+end
+
 function M.render(file, bufnr)
   local target = file or vim.api.nvim_buf_get_name(0)
   if target == "" then
@@ -369,6 +480,7 @@ function M.render(file, bufnr)
   end
 
   local current_buf = bufnr or vim.api.nvim_get_current_buf()
+  ensure_buffer_keymaps(current_buf)
 
   if M.config.inline_in_buffer then
     render_inline_in_buffer(target, current_buf)
@@ -390,11 +502,23 @@ end
 
 local function define_autocmd()
   local group = vim.api.nvim_create_augroup("MermaidInlineAuto", { clear = true })
+
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group = group,
+    pattern = M.config.pattern,
+    callback = function(args)
+      ensure_buffer_keymaps(args.buf)
+      if M.config.auto_render then
+        M.render(args.file, args.buf)
+      end
+    end,
+  })
+
   if not M.config.auto_render then
     return
   end
 
-  vim.api.nvim_create_autocmd({ "BufWritePost", "BufEnter" }, {
+  vim.api.nvim_create_autocmd("BufWritePost", {
     group = group,
     pattern = M.config.pattern,
     callback = function(args)
@@ -441,6 +565,17 @@ function M.setup(opts)
     nargs = "?",
     complete = "file",
   })
+
+  create_or_replace_user_command("MermaidInlineToggleView", function()
+    local bufnr = vim.api.nvim_get_current_buf()
+    local state = get_state(bufnr)
+    state.mode = (state.mode == "image") and "code" or "image"
+    local file = vim.api.nvim_buf_get_name(bufnr)
+    if file ~= "" then
+      render_inline_in_buffer(file, bufnr)
+    end
+    vim.notify("Mermaid view mode: " .. state.mode, vim.log.levels.INFO)
+  end, {})
 
   create_or_replace_user_command("MermaidInlineToggleAuto", function()
     M.toggle_auto()

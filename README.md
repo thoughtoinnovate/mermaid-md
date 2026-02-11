@@ -76,6 +76,9 @@ return {
       command = "mermaid-inline",
       auto_render = true,
       inline_in_buffer = true,
+      default_view_mode = "image", -- image|code
+      image_width_cells = 80,
+      toggle_key = "<leader>mt",
       open_preview_on_render = false,
       pattern = "*.md",
       render_args = { "--inline", "--clear" },
@@ -93,23 +96,33 @@ return {
 
 Behavior:
 
-- On `BufEnter`/`BufWritePost` for `*.md`, mermaid blocks are rendered.
-- If `image.nvim` is available, PNGs are displayed inline in the markdown buffer.
-- If `image.nvim` is missing, plugin falls back to CLI-only rendering and logs a warning.
+- On `BufEnter`/`BufWritePost` for `*.md`, Mermaid diagrams are rendered automatically.
+- In `image` mode:
+  - Mermaid code blocks are folded (hidden).
+  - Rendered images are shown in the buffer and horizontally centered.
+- In `code` mode:
+  - Mermaid source code is shown again.
+  - Inline images are cleared.
 
-Available commands:
+Toggle image/code mode:
+
+- Keybind: `<leader>mt` (configurable via `toggle_key`)
+- Command: `:MermaidInlineToggleView`
+
+Open modal preview:
+
+- Put cursor on a Mermaid block and press `Enter`, or run `:MermaidInlineOpenModal`.
+- Modal controls:
+  - `+` or `=`: zoom in
+  - `-`: zoom out
+  - `q` or `Esc`: close modal
+
+Other commands:
 
 - `:MermaidInlineOpenPreview`
 - `:MermaidInlineRender`
 - `:MermaidInlineRender /full/path/file.md`
-- `:MermaidInlineOpenModal`
 - `:MermaidInlineToggleAuto`
-
-Modal controls (inside modal window):
-
-- `+` or `=`: zoom in
-- `-`: zoom out
-- `q` or `Esc`: close modal
 
 ## Neovim headless test
 
