@@ -163,16 +163,32 @@ local function run_shell_async(cmd, on_exit)
   })
 end
 
+local render_inline_in_buffer
+
 local function close_modal()
-  if M.modal and M.modal.img then
+  local modal = M.modal
+  if modal and modal.img then
     pcall(function()
-      M.modal.img:clear()
+      modal.img:clear()
     end)
   end
-  if M.modal and M.modal.win and vim.api.nvim_win_is_valid(M.modal.win) then
-    pcall(vim.api.nvim_win_close, M.modal.win, true)
+  if modal and modal.win and vim.api.nvim_win_is_valid(modal.win) then
+    pcall(vim.api.nvim_win_close, modal.win, true)
   end
   M.modal = nil
+
+  if modal and modal.bufnr and modal.file and render_inline_in_buffer then
+    local bufnr = modal.bufnr
+    local file = modal.file
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) ~= "" then
+      local state = get_state(bufnr)
+      if state.mode == "image" then
+        vim.schedule(function()
+          render_inline_in_buffer(file, bufnr)
+        end)
+      end
+    end
+  end
 end
 
 local function modal_size()
@@ -262,7 +278,7 @@ local function modal_zoom(delta)
   render_modal_image()
 end
 
-local function open_modal(path)
+local function open_modal(path, bufnr, file)
   local image = image_module()
   if not image then
     vim.notify("image.nvim is required for modal view", vim.log.levels.WARN)
@@ -275,6 +291,10 @@ local function open_modal(path)
   end
 
   close_modal()
+
+  if bufnr then
+    clear_buffer_images(bufnr)
+  end
 
   local width, height = modal_size()
   local row = math.floor((vim.o.lines - height) / 2) - 1
@@ -301,6 +321,8 @@ local function open_modal(path)
     img = nil,
     path = path,
     zoom = 1.0,
+    bufnr = bufnr,
+    file = file,
   }
 
   local function map(lhs, rhs)
@@ -441,7 +463,7 @@ local function open_modal_for_current(file, bufnr)
   local path = diagram_path(out_dir, index)
 
   if vim.fn.filereadable(path) == 1 then
-    open_modal(path)
+    open_modal(path, bufnr, file)
     return
   end
 
@@ -451,11 +473,11 @@ local function open_modal_for_current(file, bufnr)
       vim.notify("Mermaid render failed (exit " .. tostring(code) .. ")", vim.log.levels.WARN)
       return
     end
-    open_modal(path)
+    open_modal(path, bufnr, file)
   end)
 end
 
-local function render_inline_in_buffer(file, bufnr)
+render_inline_in_buffer = function(file, bufnr)
   local state = get_state(bufnr)
   local blocks = find_mermaid_blocks(bufnr)
 
