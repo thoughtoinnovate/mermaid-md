@@ -11,6 +11,8 @@ local defaults = {
   inline_out_dir = nil,
   default_view_mode = "image", -- image|code
   image_width_cells = 80,
+  inline_image_max_width_ratio = 0.72,
+  inline_image_max_height_ratio = 0.45,
   toggle_key = "<leader>mt",
   modal_width_ratio = 0.85,
   modal_height_ratio = 0.85,
@@ -48,6 +50,14 @@ local function image_module()
     return nil
   end
   return image
+end
+
+local function mermaid_foldtext()
+  return " "
+end
+
+function M._foldtext()
+  return mermaid_foldtext()
 end
 
 local function get_state(bufnr)
@@ -354,11 +364,13 @@ local function set_mermaid_folds(bufnr, blocks)
         foldmethod = vim.wo[winid].foldmethod,
         foldenable = vim.wo[winid].foldenable,
         foldlevel = vim.wo[winid].foldlevel,
+        foldtext = vim.wo[winid].foldtext,
       }
     end
 
     vim.wo[winid].foldmethod = "manual"
     vim.wo[winid].foldenable = true
+    vim.wo[winid].foldtext = "v:lua.require('mermaid_inline')._foldtext()"
 
     vim.api.nvim_win_call(winid, function()
       vim.cmd("silent! normal! zE")
@@ -383,6 +395,7 @@ local function restore_folds(bufnr)
       vim.wo[winid].foldmethod = saved.foldmethod
       vim.wo[winid].foldenable = saved.foldenable
       vim.wo[winid].foldlevel = saved.foldlevel
+      vim.wo[winid].foldtext = saved.foldtext
       state.win_fold_opts[winid] = nil
     end
   end
@@ -419,7 +432,13 @@ local function render_images_in_buffer(bufnr, out_dir, blocks)
 
   for _, winid in ipairs(final_wins) do
     local win_width = vim.api.nvim_win_get_width(winid)
-    local x = math.max(0, math.floor((win_width - M.config.image_width_cells) / 2))
+    local win_height = vim.api.nvim_win_get_height(winid)
+    local max_width = math.max(20, math.floor(win_width * M.config.inline_image_max_width_ratio))
+    if M.config.image_width_cells and M.config.image_width_cells > 0 then
+      max_width = math.min(max_width, M.config.image_width_cells)
+    end
+    local max_height = math.max(6, math.floor(win_height * M.config.inline_image_max_height_ratio))
+    local x = math.max(0, math.floor((win_width - max_width) / 2))
 
     for _, block in ipairs(blocks) do
       local path = diagram_path(out_dir, block.index)
@@ -429,6 +448,8 @@ local function render_images_in_buffer(bufnr, out_dir, blocks)
           buffer = bufnr,
           x = x,
           y = math.max(0, block.start_line - 2),
+          max_width = max_width,
+          max_height = max_height,
           with_virtual_padding = true,
         })
         if ok_img and img then
@@ -458,7 +479,10 @@ local function open_modal_for_current(file, bufnr)
     return
   end
 
-  local index = block_index_at_cursor(bufnr) or 1
+  local index = block_index_at_cursor(bufnr)
+  if not index then
+    return
+  end
   local out_dir = inline_out_dir(bufnr, file)
   local path = diagram_path(out_dir, index)
 
