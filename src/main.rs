@@ -13,7 +13,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::display::{clear_inline, show_inline};
 use crate::extract::extract_mermaid_blocks;
-use crate::render::render_blocks;
+use crate::render::{RenderOptions, render_blocks};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -53,6 +53,15 @@ enum Commands {
         /// Clear previous inline images before rendering.
         #[arg(long)]
         clear: bool,
+        /// Render scale passed to mmdc (e.g. 2.0 for higher resolution).
+        #[arg(long)]
+        scale: Option<f32>,
+        /// Explicit output width passed to mmdc.
+        #[arg(long)]
+        width: Option<u32>,
+        /// Explicit output height passed to mmdc.
+        #[arg(long)]
+        height: Option<u32>,
     },
 }
 
@@ -74,7 +83,12 @@ fn run() -> Result<()> {
             index,
             watch,
             clear,
-        } => render_cmd(&file, inline, out_dir, index, watch, clear),
+            scale,
+            width,
+            height,
+        } => render_cmd(
+            &file, inline, out_dir, index, watch, clear, scale, width, height,
+        ),
     }
 }
 
@@ -115,6 +129,7 @@ fn setup(upgrade: bool) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_cmd(
     file: &Path,
     inline: bool,
@@ -122,12 +137,21 @@ fn render_cmd(
     index: Option<usize>,
     watch: bool,
     clear: bool,
+    scale: Option<f32>,
+    width: Option<u32>,
+    height: Option<u32>,
 ) -> Result<()> {
+    let options = RenderOptions {
+        scale,
+        width,
+        height,
+    };
+
     if watch {
-        watch_and_render(file, inline, out_dir, index, clear)?;
+        watch_and_render(file, inline, out_dir, index, clear, &options)?;
         return Ok(());
     }
-    render_once(file, inline, out_dir, index, clear)
+    render_once(file, inline, out_dir, index, clear, &options)
 }
 
 fn render_once(
@@ -136,6 +160,7 @@ fn render_once(
     out_dir: Option<PathBuf>,
     index: Option<usize>,
     clear: bool,
+    options: &RenderOptions,
 ) -> Result<()> {
     let markdown = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
     let mut blocks = extract_mermaid_blocks(&markdown);
@@ -157,7 +182,7 @@ fn render_once(
             .keep()
     };
 
-    let rendered = render_blocks(&blocks, &out_dir)?;
+    let rendered = render_blocks(&blocks, &out_dir, options)?;
 
     if inline {
         if clear {
@@ -177,19 +202,20 @@ fn watch_and_render(
     out_dir: Option<PathBuf>,
     index: Option<usize>,
     clear: bool,
+    options: &RenderOptions,
 ) -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher: RecommendedWatcher = Watcher::new(tx, notify::Config::default())?;
     watcher.watch(file, RecursiveMode::NonRecursive)?;
 
     // Initial render
-    let _ = render_once(file, inline, out_dir.clone(), index, clear);
+    let _ = render_once(file, inline, out_dir.clone(), index, clear, options);
 
     loop {
         match rx.recv() {
             Ok(_event) => {
                 std::thread::sleep(Duration::from_millis(150));
-                let _ = render_once(file, inline, out_dir.clone(), index, clear);
+                let _ = render_once(file, inline, out_dir.clone(), index, clear, options);
             }
             Err(err) => bail!("watch error: {err}"),
         }

@@ -10,6 +10,13 @@ pub struct RenderedDiagram {
     pub output_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RenderOptions {
+    pub scale: Option<f32>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
 fn detect_chrome_executable() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("MMDC_CHROME_PATH")
         && !path.trim().is_empty()
@@ -49,7 +56,11 @@ fn build_puppeteer_config() -> Result<Option<NamedTempFile>> {
     Ok(Some(config))
 }
 
-pub fn render_blocks(blocks: &[MermaidBlock], out_dir: &Path) -> Result<Vec<RenderedDiagram>> {
+pub fn render_blocks(
+    blocks: &[MermaidBlock],
+    out_dir: &Path,
+    options: &RenderOptions,
+) -> Result<Vec<RenderedDiagram>> {
     let mut rendered = Vec::with_capacity(blocks.len());
     let puppeteer_config = build_puppeteer_config()?;
 
@@ -71,6 +82,16 @@ pub fn render_blocks(blocks: &[MermaidBlock], out_dir: &Path) -> Result<Vec<Rend
 
         if let Some(config) = &puppeteer_config {
             cmd.args(["-p", config.path().to_string_lossy().as_ref()]);
+        }
+
+        if let Some(scale) = options.scale {
+            cmd.args(["--scale", scale.to_string().as_ref()]);
+        }
+        if let Some(width) = options.width {
+            cmd.args(["--width", width.to_string().as_ref()]);
+        }
+        if let Some(height) = options.height {
+            cmd.args(["--height", height.to_string().as_ref()]);
         }
 
         let output = cmd.output().context("run mmdc")?;

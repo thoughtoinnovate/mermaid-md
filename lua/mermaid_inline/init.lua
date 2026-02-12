@@ -7,6 +7,7 @@ local defaults = {
   preview_height = 12,
   open_preview_on_render = false,
   render_args = { "--inline", "--clear" },
+  render_quality_args = { "--scale", "2", "--width", "2200" },
   inline_in_buffer = true,
   inline_out_dir = nil,
   default_view_mode = "image", -- image|code
@@ -84,11 +85,25 @@ function M.open_preview()
   return M.preview_job
 end
 
-local function render_cmd(file)
-  local cmd = M.config.command .. " render " .. shellescape(file)
-  for _, arg in ipairs(M.config.render_args or {}) do
-    cmd = cmd .. " " .. arg
+local function append_args(cmd, args)
+  for _, arg in ipairs(args or {}) do
+    cmd = cmd .. " " .. shellescape(arg)
   end
+  return cmd
+end
+
+local function build_render_cmd(file, out_dir)
+  local cmd = M.config.command .. " render " .. shellescape(file)
+  if out_dir and out_dir ~= "" then
+    cmd = cmd .. " --out-dir " .. shellescape(out_dir)
+  end
+  cmd = append_args(cmd, M.config.render_quality_args)
+  return cmd
+end
+
+local function render_cmd(file)
+  local cmd = build_render_cmd(file, nil)
+  cmd = append_args(cmd, M.config.render_args)
   return cmd
 end
 
@@ -513,7 +528,7 @@ local function open_modal_for_current(file, bufnr)
     return
   end
 
-  local cmd = M.config.command .. " render " .. shellescape(file) .. " --out-dir " .. shellescape(out_dir)
+  local cmd = build_render_cmd(file, out_dir)
   run_shell_async(cmd, function(code)
     if code ~= 0 then
       vim.notify("Mermaid render failed (exit " .. tostring(code) .. ")", vim.log.levels.WARN)
@@ -534,7 +549,7 @@ render_inline_in_buffer = function(file, bufnr)
   end
 
   local out_dir = inline_out_dir(bufnr, file)
-  local cmd = M.config.command .. " render " .. shellescape(file) .. " --out-dir " .. shellescape(out_dir)
+  local cmd = build_render_cmd(file, out_dir)
 
   run_shell_async(cmd, function(code)
     if code ~= 0 then

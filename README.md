@@ -45,8 +45,11 @@ mermaid-inline render /path/to/file.md --inline --clear
 # render to files only (headless-friendly)
 mermaid-inline render /path/to/file.md --out-dir /tmp/mermaid-out
 
+# high-quality output for better inline zoom
+mermaid-inline render /path/to/file.md --scale 2 --width 2200 --inline --clear
+
 # watch mode
-mermaid-inline render /path/to/file.md --watch --out-dir /tmp/mermaid-out
+mermaid-inline render /path/to/file.md --watch --out-dir /tmp/mermaid-out --scale 2 --width 2200
 ```
 
 ## Caching behavior
@@ -82,6 +85,7 @@ return {
       open_preview_on_render = false,
       pattern = "*.md",
       render_args = { "--inline", "--clear" },
+      render_quality_args = { "--scale", "2", "--width", "2200" },
       modal_width_ratio = 0.85,
       modal_height_ratio = 0.85,
       modal_zoom_step = 0.15,
