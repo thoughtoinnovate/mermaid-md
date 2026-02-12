@@ -67,6 +67,7 @@ local function get_state(bufnr)
       out_dir = nil,
       keymaps_set = false,
       win_fold_opts = {},
+      suspended = false,
     }
   end
   return M.buffer_state[bufnr]
@@ -159,6 +160,27 @@ local function clear_buffer_images(bufnr)
   end
   M.buffer_images[bufnr] = {}
   pcall(vim.api.nvim_buf_clear_namespace, bufnr, M.ns, 0, -1)
+end
+
+local function is_markdown_buffer(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return false
+  end
+  if vim.bo[bufnr].filetype == "markdown" then
+    return true
+  end
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  return name:match("%.md$") ~= nil
+end
+
+local function suspend_all_inline_images()
+  for bufnr, images in pairs(M.buffer_images) do
+    if images and #images > 0 then
+      clear_buffer_images(bufnr)
+      local state = get_state(bufnr)
+      state.suspended = true
+    end
+  end
 end
 
 local function run_shell_async(cmd, on_exit)
@@ -607,6 +629,38 @@ local function define_autocmd()
       ensure_buffer_keymaps(args.buf)
       if M.config.auto_render then
         M.render(args.file, args.buf)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "WinEnter", "BufWinEnter" }, {
+    group = group,
+    callback = function(args)
+      if not M.config.inline_in_buffer then
+        return
+      end
+
+      local winid = vim.api.nvim_get_current_win()
+      local cfg = vim.api.nvim_win_get_config(winid)
+      local is_float = cfg and cfg.relative and cfg.relative ~= ""
+
+      if is_float or not is_markdown_buffer(args.buf) then
+        suspend_all_inline_images()
+        return
+      end
+
+      local state = get_state(args.buf)
+      if state.mode ~= "image" then
+        state.suspended = false
+        return
+      end
+
+      if state.suspended then
+        state.suspended = false
+        local file = vim.api.nvim_buf_get_name(args.buf)
+        if file ~= "" then
+          render_inline_in_buffer(file, args.buf)
+        end
       end
     end,
   })
